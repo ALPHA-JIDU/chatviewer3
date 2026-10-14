@@ -2,6 +2,7 @@ package com.jihad.chatviewer
 
 import android.app.Application
 import com.jihad.chatviewer.data.AppDatabase
+import com.jihad.chatviewer.importer.ImportSource
 import com.jihad.chatviewer.importer.ScanResult
 
 class AppContainer(app: Application) {
@@ -9,6 +10,12 @@ class AppContainer(app: Application) {
 
     @Volatile
     var lastScan: ScanResult? = null
+
+    @Volatile
+    var lastSource: ImportSource? = null
+
+    @Volatile
+    var selectedChatIds: Set<String> = emptySet()
 }
 
 class ChatViewerApp : Application() {
