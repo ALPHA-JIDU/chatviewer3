@@ -3,7 +3,10 @@ package com.jihad.chatviewer.importer
 import java.io.InputStream
 
 internal val MESSAGE_FILE = Regex("^message_\\d+\\.json$")
-private val TRAILING_NUMBER = Regex("_(\\d+)$")
+internal val TRAILING_NUMBER = Regex("_(\\d+)$")
+
+internal fun chatIdOf(folder: String): String =
+    TRAILING_NUMBER.find(folder)?.groupValues?.get(1) ?: folder
 
 data class ScannedChat(
     val chatId: String,
@@ -20,13 +23,15 @@ data class ScannedChat(
 data class ScanResult(
     val chats: List<ScannedChat>,
     val stickersBytes: Long,
-    val unreadable: List<String>
+    val unreadable: List<String>,
+    val myName: String = ""
 )
 
 class ScanAccumulator {
     private class Builder(val chatId: String, val folderName: String) {
         var title = ""
         val groups = LinkedHashSet<String>()
+        val names = LinkedHashSet<String>()
         var participants = 0
         var messages = 0
         var firstMs = Long.MAX_VALUE
@@ -49,7 +54,7 @@ class ScanAccumulator {
         if (rel.size < 3) return
 
         val folder = rel[1]
-        val id = TRAILING_NUMBER.find(folder)?.groupValues?.get(1) ?: folder
+        val id = chatIdOf(folder)
         val b = builders.getOrPut(id) { Builder(id, folder) }
         b.groups.add(group)
 
@@ -58,6 +63,7 @@ class ScanAccumulator {
                 val info = open().use { ChatFileParser.parse(it) }
                 if (b.title.isEmpty()) b.title = info.title
                 b.participants = maxOf(b.participants, info.participants)
+                b.names.addAll(info.participantNames)
                 b.messages += info.messageCount
                 if (info.messageCount > 0) {
                     b.firstMs = minOf(b.firstMs, info.firstMs)
@@ -85,6 +91,13 @@ class ScanAccumulator {
                 mediaBytes = b.mediaBytes
             )
         }.sortedByDescending { it.lastMessageMs }
-        return ScanResult(chats, stickersBytes, unreadable.toList())
+
+        val tally = HashMap<String, Int>()
+        for (b in builders.values) {
+            for (n in b.names) tally[n] = (tally[n] ?: 0) + 1
+        }
+        val myName = tally.entries.maxByOrNull { it.value }?.key ?: ""
+
+        return ScanResult(chats, stickersBytes, unreadable.toList(), myName)
     }
 }
