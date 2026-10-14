@@ -5,6 +5,7 @@ import android.net.Uri
 import android.os.Bundle
 import android.text.format.Formatter
 import androidx.activity.ComponentActivity
+import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
@@ -31,7 +32,9 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.unit.dp
 import com.jihad.chatviewer.importer.ExportScanner
+import com.jihad.chatviewer.importer.ImportSource
 import com.jihad.chatviewer.importer.ScanResult
+import com.jihad.chatviewer.ui.ChatPickerScreen
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.isActive
@@ -44,7 +47,7 @@ class MainActivity : ComponentActivity() {
         setContent {
             MaterialTheme {
                 Surface(modifier = Modifier.fillMaxSize()) {
-                    ImportStartScreen()
+                    AppRoot()
                 }
             }
         }
@@ -52,15 +55,47 @@ class MainActivity : ComponentActivity() {
 }
 
 @Composable
-fun ImportStartScreen() {
+fun AppRoot() {
+    val context = LocalContext.current
+    val container = (context.applicationContext as ChatViewerApp).container
+    var showPicker by remember { mutableStateOf(false) }
+    var notice by remember { mutableStateOf("") }
+    val scan = container.lastScan
+
+    if (showPicker && scan != null) {
+        BackHandler { showPicker = false }
+        ChatPickerScreen(
+            scan = scan,
+            initialSelected = container.selectedChatIds,
+            onBack = { showPicker = false },
+            onConfirm = { ids ->
+                container.selectedChatIds = ids
+                notice = "${ids.size} chats selected. Importing comes in the next batch."
+                showPicker = false
+            }
+        )
+    } else {
+        ImportStartScreen(
+            notice = notice,
+            onChooseChats = { showPicker = true }
+        )
+    }
+}
+
+@Composable
+fun ImportStartScreen(notice: String, onChooseChats: () -> Unit) {
     val context = LocalContext.current
     val container = (context.applicationContext as ChatViewerApp).container
     val scope = rememberCoroutineScope()
     val view = LocalView.current
 
-    var status by remember { mutableStateOf("Choose your export to scan.") }
+    var status by remember {
+        mutableStateOf(
+            if (container.lastScan != null) "Scan finished." else "Choose your export to scan."
+        )
+    }
     var scanning by remember { mutableStateOf(false) }
-    var result by remember { mutableStateOf<ScanResult?>(null) }
+    var result by remember { mutableStateOf<ScanResult?>(container.lastScan) }
     var job by remember { mutableStateOf<Job?>(null) }
 
     DisposableEffect(scanning) {
@@ -68,7 +103,7 @@ fun ImportStartScreen() {
         onDispose { view.keepScreenOn = false }
     }
 
-    fun startScan(work: (ExportScanner) -> ScanResult) {
+    fun startScan(source: ImportSource, work: (ExportScanner) -> ScanResult) {
         if (scanning) return
         scanning = true
         result = null
@@ -82,6 +117,8 @@ fun ImportStartScreen() {
                 )
                 val r = work(scanner)
                 container.lastScan = r
+                container.lastSource = source
+                container.selectedChatIds = emptySet()
                 result = r
                 status = "Scan finished."
             } catch (e: CancellationException) {
@@ -97,7 +134,7 @@ fun ImportStartScreen() {
     val zipPicker = rememberLauncherForActivityResult(
         ActivityResultContracts.OpenMultipleDocuments()
     ) { uris: List<Uri> ->
-        if (uris.isNotEmpty()) startScan { it.scanZips(uris) }
+        if (uris.isNotEmpty()) startScan(ImportSource.Zips(uris)) { it.scanZips(uris) }
     }
 
     val folderPicker = rememberLauncherForActivityResult(
@@ -111,7 +148,7 @@ fun ImportStartScreen() {
             } catch (e: SecurityException) {
                 // fine for now
             }
-            startScan { it.scanFolder(uri) }
+            startScan(ImportSource.Folder(uri)) { it.scanFolder(uri) }
         }
     }
 
@@ -138,7 +175,7 @@ fun ImportStartScreen() {
         Text(status)
 
         val r = result
-        if (r != null) {
+        if (r != null && !scanning) {
             val totalMessages = r.chats.sumOf { it.messageCount.toLong() }
             val totalMedia = r.chats.sumOf { it.mediaBytes }
             Text(
@@ -151,14 +188,8 @@ fun ImportStartScreen() {
             if (r.unreadable.isNotEmpty()) {
                 Text("Unreadable (first 5):\n" + r.unreadable.take(5).joinToString("\n"))
             }
-            Text("Latest 10 chats:")
-            r.chats.take(10).forEach { c ->
-                Text(
-                    "${c.title}\n  ${c.messageCount} messages, " +
-                        Formatter.formatShortFileSize(context, c.mediaBytes) +
-                        ", ${c.groupLabel}"
-                )
-            }
+            Button(onClick = onChooseChats) { Text("Choose chats to import") }
+            if (notice.isNotEmpty()) Text(notice)
         }
     }
 }
