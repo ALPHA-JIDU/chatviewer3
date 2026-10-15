@@ -21,7 +21,8 @@ class ExportImporter(
     private val db: AppDatabase,
     private val walker: ExportWalker,
     private val request: ImportRequest,
-    private val onProgress: (String) -> Unit
+    private val isActive: () -> Boolean,
+    private val onProgress: (String, Long) -> Unit
 ) {
     private class ChatAcc(val chatId: String, val folderName: String) {
         var title = ""
@@ -38,9 +39,12 @@ class ExportImporter(
     private var inserted = 0L
 
     fun run(): ImportSummary {
-        walker.walk(request.source) { rel, _, open -> handle(rel, open) }
-        runBlocking {
-            for (c in chats.values) finishChat(c)
+        try {
+            walker.walk(request.source) { rel, _, open -> handle(rel, open) }
+        } finally {
+            runBlocking {
+                for (c in chats.values) finishChat(c)
+            }
         }
         return ImportSummary(chats.size, read, read - inserted, unreadable.toList())
     }
@@ -52,6 +56,7 @@ class ExportImporter(
         val id = chatIdOf(folder)
         if (id !in request.chatIds) return
 
+        onProgress("Reading $folder", read)
         val acc = chats.getOrPut(id) { ChatAcc(id, folder) }
         acc.groups.add(rel[0])
         val batch = ArrayList<ParsedMessage>()
@@ -68,8 +73,11 @@ class ExportImporter(
                     }
                     batch.add(pm)
                     read++
-                    if (batch.size >= 500) flush(batch)
-                    if (read % 2000L == 0L) onProgress("$read messages read")
+                    if (batch.size >= 500) {
+                        flush(batch)
+                        onProgress("$read messages read", read)
+                        if (!isActive()) throw CancellationException("Cancelled")
+                    }
                 }
             }
             flush(batch)
