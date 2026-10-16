@@ -48,7 +48,7 @@ fun ImportScreen(
             if (state.total > 0) {
                 val fraction = (state.done.toFloat() / state.total.toFloat()).coerceIn(0f, 1f)
                 LinearProgressIndicator(progress = { fraction }, modifier = Modifier.fillMaxWidth())
-                Text("${(fraction * 100).toInt()}%  (${state.done} of ${state.total} messages)")
+                Text("${(fraction * 100).toInt()}%")
             } else {
                 LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
             }
@@ -58,17 +58,16 @@ fun ImportScreen(
         } else if (state.finished) {
             when {
                 state.cancelled -> Text(
-                    "Import cancelled.\nMessages already saved are kept. " +
-                        "You can import again later; duplicates are skipped."
+                    "Import cancelled.\nMessages and media already saved are kept. " +
+                        "You can import again later; anything already saved is skipped."
                 )
                 state.failed.isNotEmpty() -> Text("Import failed:\n${state.failed}")
                 else -> {
                     Text("Import finished.")
                     Text(state.resultText)
                     if (state.unreadable.isNotEmpty()) {
-                        Text("Unreadable (first 5):\n" + state.unreadable.take(5).joinToString("\n"))
+                        Text("Could not read (first 5):\n" + state.unreadable.take(5).joinToString("\n"))
                     }
-                    Text("Photos, videos and stickers are copied in the next update.")
                 }
             }
             Button(onClick = onDone) { Text("Done") }
