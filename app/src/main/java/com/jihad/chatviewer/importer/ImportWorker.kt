@@ -10,6 +10,7 @@ import android.content.pm.ServiceInfo
 import android.os.Build
 import android.os.PowerManager
 import android.os.SystemClock
+import android.text.format.Formatter
 import androidx.core.app.NotificationCompat
 import androidx.work.CoroutineWorker
 import androidx.work.ForegroundInfo
@@ -39,7 +40,31 @@ class ImportWorker(context: Context, params: WorkerParameters) : CoroutineWorker
             return Result.failure()
         }
 
-        val total = container.importState.value.total
+        // Work out the total size of the job (messages + media in KB) and check free space.
+        val scan = container.lastScan
+        var needBytes = 0L
+        val total: Long
+        if (scan != null) {
+            val selected = scan.chats.filter { it.chatId in request.chatIds }
+            needBytes = selected.sumOf { it.mediaBytes } + scan.stickersBytes
+            total = selected.sumOf { it.messageCount.toLong() } + needBytes / 1024L
+        } else {
+            total = container.importState.value.total
+        }
+
+        val mediaRoot = MediaFiles.root(applicationContext)
+        mediaRoot.mkdirs()
+        val free = applicationContext.filesDir.usableSpace
+        if (needBytes > 0L && free < needBytes + 200L * 1024L * 1024L) {
+            val msg = "Not enough free space. The import needs about " +
+                Formatter.formatShortFileSize(applicationContext, needBytes) +
+                " and the phone has " +
+                Formatter.formatShortFileSize(applicationContext, free) + " free."
+            container.importState.value = ImportUiState(finished = true, failed = msg)
+            notifyDone("Import failed", msg)
+            return Result.failure()
+        }
+
         container.importState.value = ImportUiState(running = true, text = "Starting...", total = total)
         try {
             setForeground(buildInfo("Starting...", 0L, total))
@@ -76,6 +101,7 @@ class ImportWorker(context: Context, params: WorkerParameters) : CoroutineWorker
                     container.database,
                     walker,
                     request,
+                    mediaRoot,
                     { isActive },
                     { t, d -> report(t, d) }
                 ).run()
@@ -84,7 +110,9 @@ class ImportWorker(context: Context, params: WorkerParameters) : CoroutineWorker
                 "Chats imported: ${summary.chats}\n" +
                     "Messages read: ${summary.messagesRead}\n" +
                     "Already present (skipped): ${summary.duplicates}\n" +
-                    "Unreadable files: ${summary.unreadable.size}"
+                    "Media files copied: ${summary.mediaCopied}\n" +
+                    "Media already there: ${summary.mediaSkipped}\n" +
+                    "Files that could not be read: ${summary.unreadable.size}"
             container.importState.value = ImportUiState(
                 finished = true,
                 resultText = resultText,
